@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MT5 Analytics Dashboard</title>
+    <!-- Tailwind CSS para el diseño -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js para los gráficos -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Iconos de Lucide -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: '#0f172a',
+                        panel: '#1e293b',
+                        accent: '#3b82f6',
+                        success: '#10b981',
+                        danger: '#ef4444'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0b1120; color: #f8fafc; font-family: 'Inter', sans-serif; }
+        .glass-panel { background: #151e2e; border: 1px solid #1e293b; border-radius: 0.75rem; }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-dark border-r border-panel flex flex-col">
+        <div class="p-6 flex items-center gap-3">
+            <div class="w-8 h-8 bg-accent rounded-lg flex items-center justify-center font-bold">TB</div>
+            <span class="text-xl font-bold">Trade Analytics</span>
+        </div>
+        <nav class="flex-1 px-4 space-y-2">
+            <a href="#" class="flex items-center gap-3 px-3 py-2 bg-panel text-accent rounded-lg"><i data-lucide="home" class="w-5 h-5"></i> Dashboard</a>
+            <a href="#" class="flex items-center gap-3 px-3 py-2 text-gray-400 hover:text-white rounded-lg"><i data-lucide="list" class="w-5 h-5"></i> Trades</a>
+            <a href="#" class="flex items-center gap-3 px-3 py-2 text-gray-400 hover:text-white rounded-lg"><i data-lucide="bar-chart-2" class="w-5 h-5"></i> Análisis</a>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto p-8">
+        
+        <!-- Header & Upload -->
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-2xl font-bold">Análisis de Estrategias</h1>
+                <p class="text-gray-400 text-sm">Importa tus reportes de MT5 para comparar sistemas.</p>
+            </div>
+            <div class="flex gap-4">
+                <input type="file" id="fileInput" multiple accept=".html" class="hidden">
+                <button onclick="document.getElementById('fileInput').click()" class="bg-accent hover:bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors">
+                    <i data-lucide="upload" class="w-4 h-4"></i> Importar Reportes (HTML)
+                </button>
+            </div>
+        </div>
+
+        <!-- Zona de Drop / Estado Vacío -->
+        <div id="emptyState" class="glass-panel p-12 text-center flex flex-col items-center justify-center border-dashed border-2 border-panel mb-8">
+            <i data-lucide="file-box" class="w-16 h-16 text-gray-500 mb-4"></i>
+            <h2 class="text-xl font-semibold mb-2">No hay datos cargados</h2>
+            <p class="text-gray-400 mb-4">Selecciona uno o varios archivos HTML generados por el Probador de Estrategias de MetaTrader 5.</p>
+        </div>
+
+        <!-- Dashboard (Oculto hasta cargar datos) -->
+        <div id="dashboard" class="hidden space-y-8">
+            
+            <!-- KPI Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="kpiGrid">
+                <!-- Los KPIs se inyectarán aquí con JS -->
+            </div>
+
+            <!-- Charts Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="glass-panel p-6">
+                    <h3 class="text-lg font-semibold mb-4">Curva de Capital (Equity)</h3>
+                    <canvas id="equityChart"></canvas>
+                </div>
+                <div class="glass-panel p-6">
+                    <h3 class="text-lg font-semibold mb-4">P&L por Día de la Semana</h3>
+                    <canvas id="weekdayChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Resumen / Tabla -->
+            <div class="glass-panel p-6 overflow-x-auto">
+                <h3 class="text-lg font-semibold mb-4">Resumen Comparativo</h3>
+                <table class="w-full text-left text-sm text-gray-400">
+                    <thead class="text-xs uppercase bg-panel text-gray-300">
+                        <tr>
+                            <th class="px-4 py-3">Estrategia / Archivo</th>
+                            <th class="px-4 py-3">Beneficio Neto</th>
+                            <th class="px-4 py-3">Total Trades</th>
+                            <th class="px-4 py-3">Win Rate</th>
+                            <th class="px-4 py-3">Profit Factor</th>
+                            <th class="px-4 py-3">Max Drawdown</th>
+                            <th class="px-4 py-3">Expectativa</th>
+                        </tr>
+                    </thead>
+                    <tbody id="summaryTableBody">
+                        <!-- Filas inyectadas con JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        lucide.createIcons();
+        
+        let equityChart = null;
+        let weekdayChart = null;
+        let loadedData = [];
+
+        // Configuración de colores para múltiples reportes
+        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const files = e.target.files;
+            if (files.length === 0) return;
+
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const text = await file.text();
+                const parsedData = parseMT5Report(text, file.name);
+                if(parsedData) {
+                    parsedData.color = colors[loadedData.length % colors.length];
+                    loadedData.push(parsedData);
+                }
+            }
+            
+            updateDashboard();
+        });
+
+        function parseMT5Report(htmlString, fileName) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlString, "text/html");
+            
+            // Función auxiliar para buscar valores en la tabla de resultados de MT5
+            const getValue = (label) => {
+                const tds = Array.from(doc.querySelectorAll('td'));
+                for (let td of tds) {
+                    if (td.textContent.includes(label)) {
+                        // MT5 suele poner el valor en el siguiente TD o en el mismo
+                        let nextTd = td.nextElementSibling;
+                        if (nextTd && nextTd.querySelector('b')) {
+                            return nextTd.querySelector('b').textContent.trim();
+                        }
+                        if (td.querySelector('b')) {
+                            return td.querySelector('b').textContent.trim();
+                        }
+                    }
+                }
+                return "0";
+            };
+
+            // Extraer métricas (Soporta Inglés y Español)
+            const netProfitStr = getValue('Beneficio Neto:') !== "0" ? getValue('Beneficio Neto:') : getValue('Net Profit:');
+            const totalTradesStr = getValue('Total de operaciones ejecutadas:') !== "0" ? getValue('Total de operaciones ejecutadas:') : getValue('Total Trades:');
+            const profitFactorStr = getValue('Factor de Beneficio:') !== "0" ? getValue('Factor de Beneficio:') : getValue('Profit Factor:');
+            const drawdownStr = getValue('Reducción máxima de la equidad:') !== "0" ? getValue('Reducción máxima de la equidad:') : getValue('Maximal drawdown:');
+            const winRateStr = getValue('Posiciones rentables (% del total):') !== "0" ? getValue('Posiciones rentables (% del total):') : getValue('Profit Trades (% of total):');
+            const expectedPayoffStr = getValue('Beneficio Esperado:') !== "0" ? getValue('Beneficio Esperado:') : getValue('Expected Payoff:');
+
+            // Limpieza de strings (quitar comas, espacios, %, etc)
+            const cleanNumber = (str) => parseFloat(str.replace(/[^\d.-]/g, '')) || 0;
+
+            const netProfit = cleanNumber(netProfitStr);
+            const totalTrades = parseInt(cleanNumber(totalTradesStr));
+            const profitFactor = cleanNumber(profitFactorStr);
+            const maxDrawdown = cleanNumber(drawdownStr);
+            const winRate = cleanNumber(winRateStr);
+            const expectancy = cleanNumber(expectedPayoffStr);
+
+            // Extraer Deals para la Curva de Capital (Tabla de Transacciones)
+            // En MT5 los deals suelen tener bgcolor #FFFFFF y #F7F7F7 y contienen 'balance'
+            const deals = [];
+            const rows = doc.querySelectorAll('tr');
+            let currentBalance = 0;
+            
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                // Buscar filas que tengan la estructura de transacciones (Time, Deal, Symbol, Type, Direction, Volume, Price, Order, Commission, Swap, Profit, Balance)
+                // Filtramos si tiene al menos 10 columnas y la columna de "Profit" es numérica
+                if (cells.length >= 11 && !row.querySelector('th')) {
+                    const profitText = cells[10].textContent.trim();
+                    if (profitText !== '' && !isNaN(cleanNumber(profitText))) {
+                        const profit = cleanNumber(profitText);
+                        currentBalance += profit;
+                        deals.push({
+                            time: cells[0].textContent.trim(),
+                            profit: profit,
+                            balance: currentBalance
+                        });
+                    }
+                }
+            });
+
+            return {
+                fileName,
+                netProfit,
+                totalTrades,
+                profitFactor,
+                maxDrawdown,
+                winRate,
+                expectancy,
+                deals
+            };
+        }
+
+        function updateDashboard() {
+            updateKPIs();
+            updateSummaryTable();
+            updateEquityChart();
+            updateWeekdayChart();
+        }
+
+        function updateKPIs() {
+            const kpiGrid = document.getElementById('kpiGrid');
+            kpiGrid.innerHTML = '';
+            
+            // Tomamos el primer reporte como principal para los KPIs
+            const mainData = loadedData[0];
+            if(!mainData) return;
+
+            const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+
+            const kpis = [
+                { label: 'Beneficio Neto', value: formatCurrency(mainData.netProfit), color: mainData.netProfit >= 0 ? 'text-success' : 'text-danger' },
+                { label: 'Total Trades', value: mainData.totalTrades, color: 'text-white' },
+                { label: 'Win Rate', value: mainData.winRate.toFixed(2) + '%', color: 'text-white' },
+                { label: 'Profit Factor', value: mainData.profitFactor.toFixed(2), color: 'text-white' },
+                { label: 'Max Drawdown', value: formatCurrency(mainData.maxDrawdown), color: 'text-danger' },
+                { label: 'Expectativa', value: formatCurrency(mainData.expectancy), color: mainData.expectancy >= 0 ? 'text-success' : 'text-danger' },
+            ];
+
+            kpis.forEach(kpi => {
+                kpiGrid.innerHTML += `
+                    <div class="glass-panel p-5">
+                        <div class="text-sm text-gray-400 mb-1">${kpi.label}</div>
+                        <div class="text-2xl font-bold ${kpi.color}">${kpi.value}</div>
+                    </div>
+                `;
+            });
+        }
+
+        function updateSummaryTable() {
+            const tbody = document.getElementById('summaryTableBody');
+            tbody.innerHTML = '';
+            
+            loadedData.forEach(data => {
+                const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+                
+                tbody.innerHTML += `
+                    <tr class="border-b border-panel hover:bg-panel/50 transition-colors">
+                        <td class="px-4 py-3 font-medium text-white flex items-center gap-2">
+                            <div class="w-3 h-3 rounded-full" style="background-color: ${data.color}"></div>
+                            ${data.fileName}
+                        </td>
+                        <td class="px-4 py-3 ${data.netProfit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(data.netProfit)}</td>
+                        <td class="px-4 py-3">${data.totalTrades}</td>
+                        <td class="px-4 py-3">${data.winRate.toFixed(2)}%</td>
+                        <td class="px-4 py-3">${data.profitFactor.toFixed(2)}</td>
+                        <td class="px-4 py-3 text-danger">${formatCurrency(data.maxDrawdown)}</td>
+                        <td class="px-4 py-3 ${data.expectancy >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(data.expectancy)}</td>
+                    </tr>
+                `;
+            });
+        }
+
+        function updateEquityChart() {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            
+            const datasets = loadedData.map(data => {
+                // Acumulamos el balance para la gráfica
+                let balance = 0;
+                const dataPoints = data.deals.map(d => {
+                    balance += d.profit;
+                    return balance;
+                });
+
+                return {
+                    label: data.fileName,
+                    data: dataPoints,
+                    borderColor: data.color,
+                    backgroundColor: data.color + '20',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: true,
+                    tension: 0.1
+                };
+            });
+
+            if (equityChart) equityChart.destroy();
+            
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: loadedData[0]?.deals.map((_, i) => i + 1) || [], // Usamos el número de trade como X
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8' } }
+                    },
+                    scales: {
+                        x: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } },
+                        y: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } }
+                    }
+                }
+            });
+        }
+
+        function updateWeekdayChart() {
+            const ctx = document.getElementById('weekdayChart').getContext('2d');
+            
+            // Calculamos el P&L por día de la semana
+            const days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+            const weekdayPnL = [0, 0, 0, 0, 0, 0, 0];
+
+            // Solo usamos el primer reporte para simplificar, o podemos promediar
+            const data = loadedData[0];
+            if(!data) return;
+
+            data.deals.forEach(deal => {
+                // Parsear la fecha "2026.01.02 06:04:59"
+                const dateStr = deal.time.split(' ')[0];
+                const date = new Date(dateStr.replace(/\./g, '-'));
+                if(!isNaN(date.getTime())) {
+                    // getDay() devuelve 0 para Domingo, 1 para Lunes...
+                    let dayIndex = date.getDay() - 1; 
+                    if(dayIndex < 0) dayIndex = 6; // Ajustar Domingo al final
+                    weekdayPnL[dayIndex] += deal.profit;
+                }
+            });
+
+            if (weekdayChart) weekdayChart.destroy();
+
+            weekdayChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: days,
+                    datasets: [{
+                        label: 'P&L por Día',
+                        data: weekdayPnL,
+                        backgroundColor: weekdayPnL.map(val => val >= 0 ? '#10b981' : '#ef4444'),
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: '#94a3b8' } },
+                        y: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
